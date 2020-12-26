@@ -1,0 +1,4 @@
+set -e
+
+docker build -t joram87/jsnek2 .
+docker push joram87/jsnek2
