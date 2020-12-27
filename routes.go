@@ -2,7 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/BattlesnakeOfficial/rules"
+	"fmt"
+	"github.com/joram/jsnek2/models"
 	"github.com/julienschmidt/httprouter"
 	"log"
 	"net/http"
@@ -10,7 +11,7 @@ import (
 
 
 func Start(res http.ResponseWriter, _ *http.Request, _ httprouter.Params) {
-	respond(res, StartResponse{
+	respond(res, models.StartResponse{
 		APIVersion: "1",
 		Author: "John Oram",
 		Color: "#75CEDD",
@@ -19,25 +20,19 @@ func Start(res http.ResponseWriter, _ *http.Request, _ httprouter.Params) {
 	})
 }
 
-type SnakeRequest struct {
-	Turn  int   `json:"turn"`
-	Board rules.BoardState `json:"board"`
-	You   rules.Snake `json:"you"`
-}
-
 func Move(res http.ResponseWriter, req *http.Request, _ httprouter.Params) {
-	sr := SnakeRequest{}
+	sr := models.MoveRequest{}
 	err := json.NewDecoder(req.Body).Decode(&sr)
 	if err != nil {
-		log.Printf("Bad move request: %v", err)
+		fmt.Printf("Bad move request: %v\n", err)
 	}
 
-	response := MoveResponse{Move: move(sr).Move}
+	response := models.MoveResponse{Move: move(sr).Move}
 	respond(res, response)
 }
 
 func End(res http.ResponseWriter, req *http.Request, _ httprouter.Params) {
-	sr := SnakeRequest{}
+	sr := models.MoveRequest{}
 	err := json.NewDecoder(req.Body).Decode(&sr)
 	if err != nil {
 		log.Printf("Bad end request: %v", err)
