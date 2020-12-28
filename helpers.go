@@ -44,3 +44,4 @@ func (res *LoggingResponseWriter) WriteHeader(code int) {
 	res.statusCode = code
 	res.ResponseWriter.WriteHeader(code)
 }
+

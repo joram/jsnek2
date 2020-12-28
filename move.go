@@ -1,26 +1,64 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"github.com/BattlesnakeOfficial/rules"
 	"github.com/joram/jsnek2/models"
 	"math"
+	"math/rand"
+	"time"
 )
 
-func rateState(current,previous models.MoveRequest) float64 {
+func rateState(current, previous models.MoveRequest) float64 {
 	canReachOwnTrailRating := 10.0
 	canReachOtherTrailRating := 1.0
-	distanceToFoodRatingFactor := 100.0
+	distanceToFoodRatingFactor := 10.0
+	potentialHeadToHeadLossRating := -100.0
+	potentialHeadToHeadWinRating := 100.0
+	isSolidRating := -1000.0
+	isDeadRating := -1000.0
+	isLastRemaining := 1000.0
+
 	rating := 0.0
 
+	// is last remaining
+	if len(current.Board.Snakes) == 1 && current.Board.Snakes[0].ID == current.You.ID {
+		rating += isLastRemaining
+	}
+
+	// is dead
+	isAlive := false
+	for _, snake := range current.Board.Snakes {
+		if snake.ID == current.You.ID {
+			isAlive = true
+		}
+	}
+	if !isAlive {
+		return isDeadRating
+	}
+
+	// solid wall
 	if previous.IsSolid(current.You.Head()) {
-		return -100
+		return isSolidRating
 	}
 
 	// can reach my tail
 	_, err := current.Path(current.You.Head(), current.You.Tail())
 	if err != nil {
 		rating += canReachOwnTrailRating
+	}
+
+	// can head-to-head
+	for _, snake := range previous.OtherSnakes() {
+		head := snake.Head()
+		if head.Adjacent().Contains(current.You.Head()) {
+			if len(snake.Body) >= len(current.You.Body) {
+				rating += potentialHeadToHeadLossRating
+			} else {
+				rating += potentialHeadToHeadWinRating
+			}
+		}
 	}
 
 	// can reach other tails
@@ -50,13 +88,45 @@ func rateState(current,previous models.MoveRequest) float64 {
 	return rating
 }
 
+func otherSnakeMove(sr models.MoveRequest, snake models.Snake) string {
+	head := snake.Head()
+
+	empties := sr.EmptyPoints(head.Adjacent())
+	if len(empties) == 1 {
+		return head.Direction(empties[0])
+	}
+
+	//path, err := sr.Path(head, sr.You.Head())
+	//if err == nil {
+	//	return head.Direction(path[1])
+	//}
+
+	if len(empties) > 1 {
+		i := rand.Intn(len(empties))
+		return head.Direction(empties[i])
+	}
+
+	choices := []string{
+		rules.MoveLeft,
+		rules.MoveRight,
+		rules.MoveUp,
+		rules.MoveDown,
+	}
+	return choices[rand.Intn(len(choices))]
+
+}
+
 func getNextMoveRequest(sr models.MoveRequest, direction string) models.MoveRequest {
 	ruleset := rules.StandardRuleset{}
 	moves := []rules.SnakeMove{
 		{sr.You.ID, direction},
 	}
 	for _, snake := range sr.OtherSnakes() {
-		moves = append(moves, rules.SnakeMove{ID:snake.ID, Move:rules.MoveUp})
+
+		moves = append(moves, rules.SnakeMove{
+			ID:   snake.ID,
+			Move: otherSnakeMove(sr, snake),
+		})
 	}
 
 	nextBoardState, err := ruleset.CreateNextBoardState(&sr.Board, moves)
@@ -74,31 +144,108 @@ func getNextMoveRequest(sr models.MoveRequest, direction string) models.MoveRequ
 	}
 
 	return models.MoveRequest{
-		Board: *nextBoardState,
-		Turn:  sr.Turn + 1,
-		You:   you,
+		Board:                    *nextBoardState,
+		Turn:                     sr.Turn + 1,
+		You:                      you,
+		WeightedMaps:             map[string]models.WeightedMap{},
+		WeightedMapsAchievedGoal: map[string]bool{},
 	}
 }
 
 func move(sr models.MoveRequest) rules.SnakeMove {
-	left := rateState(getNextMoveRequest(sr, rules.MoveLeft), sr)
-	right := rateState(getNextMoveRequest(sr, rules.MoveRight), sr)
-	up := rateState(getNextMoveRequest(sr, rules.MoveUp), sr)
-	down := rateState(getNextMoveRequest(sr, rules.MoveDown), sr)
+	ctx, cancel := context.WithCancel(context.Background())
 
-	max := math.Max(up, math.Max(down, math.Max(left, right)))
+	leftMoveRequest := getNextMoveRequest(sr, rules.MoveLeft)
+	rightMoveRequest := getNextMoveRequest(sr, rules.MoveRight)
+	upMoveRequest := getNextMoveRequest(sr, rules.MoveUp)
+	downMoveRequest := getNextMoveRequest(sr, rules.MoveDown)
+
+	leftChan := make(chan float64)
+	rightChan := make(chan float64)
+	upChan := make(chan float64)
+	downChan := make(chan float64)
+
+	go findBestWorstCaseScenarios(rules.MoveLeft, leftMoveRequest, sr, leftChan, ctx)
+	go findBestWorstCaseScenarios(rules.MoveRight, rightMoveRequest, sr, rightChan, ctx)
+	go findBestWorstCaseScenarios(rules.MoveUp, upMoveRequest, sr, upChan, ctx)
+	go findBestWorstCaseScenarios(rules.MoveDown, downMoveRequest, sr, downChan, ctx)
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	worstLeft,bestLeft := <-leftChan,<-leftChan
+	worstright, bestRight := <-rightChan,<-rightChan
+	worstUp, bestUp := <-upChan, <-upChan
+	worstDown, bestDown := <-downChan,<-downChan
+
+	bestWorst := math.Max(worstLeft, math.Max(worstright, math.Max(worstUp, worstDown)))
+	bestBest := math.Max(bestLeft, math.Max(bestRight, math.Max(bestUp, bestDown)))
+
+	//direction := map[float64]string{
+	//	worstUp:    rules.MoveDown,
+	//	worstDown:  rules.MoveUp,
+	//	worstLeft:  rules.MoveLeft,
+	//	worstright: rules.MoveRight,
+	//}[bestWorst]
+	//fmt.Printf("up:%v, down:%v, left:%v, right:%v, bestWorst:%v bestBest:%v, dir:%s\n", worstUp, worstDown, worstLeft, worstright, bestWorst, bestBest, direction)
 
 	direction := map[float64]string{
-		up:    rules.MoveDown,
-		down:  rules.MoveUp,
-		left:  rules.MoveLeft,
-		right: rules.MoveRight,
-	}[max]
+		bestUp:    rules.MoveDown,
+		bestDown:  rules.MoveUp,
+		bestLeft:  rules.MoveLeft,
+		bestRight: rules.MoveRight,
+	}[bestBest]
 
-	fmt.Printf("up:%v, down:%v, left:%v, right:%v, max:%v dir:%s\n", up, down, left, right, max, direction)
+	fmt.Printf("up:%v, down:%v, left:%v, right:%v, bestbest:%v bestBest:%v, dir:%s\n", bestUp, bestDown, bestLeft, bestRight, bestWorst, bestBest, direction)
 
 	return rules.SnakeMove{
 		Move: direction,
 		ID:   sr.You.ID,
 	}
+}
+
+func findBestWorstCaseScenarios(dir string, request, previous models.MoveRequest, c chan float64, ctx context.Context) {
+	i := 0
+	worstRating := rateState(request, previous)
+	bestRating := worstRating
+	done := false
+	for !done {
+		select {
+		case <-ctx.Done():
+			done = true
+			break
+		default:
+			i += 1
+			leftMoveRequest := getNextMoveRequest(request, rules.MoveLeft)
+			rightMoveRequest := getNextMoveRequest(request, rules.MoveRight)
+			upMoveRequest := getNextMoveRequest(request, rules.MoveUp)
+			downMoveRequest := getNextMoveRequest(request, rules.MoveDown)
+			left := rateState(leftMoveRequest, request)
+			right := rateState(rightMoveRequest, request)
+			up := rateState(upMoveRequest, request)
+			down := rateState(downMoveRequest, request)
+			max := math.Max(up, math.Max(down, math.Max(left, right)))
+			worstRating = math.Min(worstRating, max)
+			bestRating = math.Max(bestRating, max)
+
+			direction := map[float64]string{
+				up:    rules.MoveDown,
+				down:  rules.MoveUp,
+				left:  rules.MoveLeft,
+				right: rules.MoveRight,
+			}[max]
+
+			previous = request
+			request = getNextMoveRequest(request, direction)
+			if request.IsDead(request.You.ID) {
+				done = true
+				break
+			}
+
+			time.Sleep(1 * time.Nanosecond)
+		}
+	}
+	c <- worstRating
+	c <- bestRating
+	fmt.Printf("%s, i:%d, worst:%f, best:%f\n", dir, i, worstRating, bestRating)
 }

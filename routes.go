@@ -14,15 +14,20 @@ func Start(res http.ResponseWriter, _ *http.Request, _ httprouter.Params) {
 	respond(res, models.StartResponse{
 		APIVersion: "1",
 		Author: "John Oram",
-		Color: "#75CEDD",
+		Color: "#ff6666",
 		Head: "silly",
 		Tail: "fat-rattle",
 	})
 }
 
 func Move(res http.ResponseWriter, req *http.Request, _ httprouter.Params) {
-	sr := models.MoveRequest{}
+	sr := models.MoveRequest{
+		WeightedMaps: map[string]models.WeightedMap{},
+		WeightedMapsAchievedGoal: map[string]bool{},
+	}
 	err := json.NewDecoder(req.Body).Decode(&sr)
+
+
 	if err != nil {
 		fmt.Printf("Bad move request: %v\n", err)
 	}
