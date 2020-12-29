@@ -29,7 +29,7 @@ func (mr *MoveRequest) IsEmpty(p Point) bool {
 
 	// in snake body
 	for _, snake := range mr.Board.Snakes {
-		for _, b := range snake.Body {
+		for _, b := range snake.Body[:len(snake.Body)-1] {
 			point := Point(b)
 			if point.Equal(p){
 				return false
@@ -89,6 +89,7 @@ func (mr *MoveRequest) WeightedMap(from, goals Points) (WeightedMap, bool) {
 	// get cached
 	input := WeightedMapInput{from, goals}
 	key := input.HashKey()
+
 	value, exists := mr.WeightedMaps[key]
 	if exists {
 		return value, mr.WeightedMapsAchievedGoal[key]
@@ -132,10 +133,17 @@ func (mr *MoveRequest) WeightedMap(from, goals Points) (WeightedMap, bool) {
 			}
 		}
 		visited += 1
+
 	}
 	mr.WeightedMapsAchievedGoal[key] = false
 	mr.WeightedMaps[key] = heat
+
 	return heat, false
+}
+
+func (mr *MoveRequest) CanAccess(from Point) int {
+	weights, _ := mr.WeightedMap(Points{from}, Points{})
+	return len(weights)
 }
 
 func (mr *MoveRequest) Path(from, to Point) ([]Point, error) {

@@ -13,8 +13,8 @@ import (
 func rateState(current, previous models.MoveRequest) float64 {
 	canReachOwnTrailRating := 10.0
 	canReachOtherTrailRating := 1.0
-	distanceToFoodRatingFactor := 10.0
-	potentialHeadToHeadLossRating := -100.0
+	moveTowardsFoodRating := 10.0
+	potentialHeadToHeadLossRating := -1000.0
 	potentialHeadToHeadWinRating := 100.0
 	isSolidRating := -1000.0
 	isDeadRating := -1000.0
@@ -30,6 +30,9 @@ func rateState(current, previous models.MoveRequest) float64 {
 
 	rating += float64(current.You.Health)
 
+	// control
+	count := current.CanAccess(current.You.Head())
+	rating += float64(count)/float64(current.Board.Width*current.Board.Height)*100
 	if current.IsEdge(current.You.Head()) {
 		rating += isEdgeRating
 	}
@@ -78,6 +81,7 @@ func rateState(current, previous models.MoveRequest) float64 {
 
 	foundFood := false
 	pathToFood := models.Points{}
+	closestFood := models.Point{}
 	for _, food := range current.Board.Food {
 		path, err := current.Path(current.You.Head(), models.Point(food))
 		if err != nil {
@@ -86,10 +90,14 @@ func rateState(current, previous models.MoveRequest) float64 {
 		if !foundFood || len(path) < len(pathToFood) {
 			foundFood = true
 			pathToFood = path
+			closestFood = models.Point(food)
 		}
 	}
 	if foundFood {
-		rating += float64(100-len(pathToFood)) * distanceToFoodRatingFactor
+		previousPath, err := previous.Path(previous.You.Head(), closestFood)
+		if err == nil && len(pathToFood) < len(previousPath) {
+			rating += moveTowardsFoodRating
+		}
 	}
 
 	return rating
@@ -103,10 +111,10 @@ func otherSnakeMove(sr models.MoveRequest, snake models.Snake) string {
 		return head.Direction(empties[0])
 	}
 
-	//path, err := sr.Path(head, sr.You.Head())
-	//if err == nil {
-	//	return head.Direction(path[1])
-	//}
+	path, err := sr.Path(head, sr.You.Head())
+	if err == nil && len(path) > 1{
+		return head.Direction(path[1])
+	}
 
 	if len(empties) > 1 {
 		i := rand.Intn(len(empties))
