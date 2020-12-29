@@ -19,12 +19,19 @@ func rateState(current, previous models.MoveRequest) float64 {
 	isSolidRating := -1000.0
 	isDeadRating := -1000.0
 	isLastRemaining := 1000.0
+	isEdgeRating := -100.0
 
 	rating := 0.0
 
 	// is last remaining
 	if len(current.Board.Snakes) == 1 && current.Board.Snakes[0].ID == current.You.ID {
 		rating += isLastRemaining
+	}
+
+	rating += float64(current.You.Health)
+
+	if current.IsEdge(current.You.Head()) {
+		rating += isEdgeRating
 	}
 
 	// is dead
@@ -116,20 +123,21 @@ func otherSnakeMove(sr models.MoveRequest, snake models.Snake) string {
 
 }
 
-func getNextMoveRequest(sr models.MoveRequest, direction string) models.MoveRequest {
+func getNextMoveRequest(mr models.MoveRequest, direction string) models.MoveRequest {
 	ruleset := rules.StandardRuleset{}
-	moves := []rules.SnakeMove{
-		{sr.You.ID, direction},
-	}
-	for _, snake := range sr.OtherSnakes() {
 
+	// moves
+	moves := []rules.SnakeMove{
+		{mr.You.ID, direction},
+	}
+	for _, snake := range mr.OtherSnakes() {
 		moves = append(moves, rules.SnakeMove{
 			ID:   snake.ID,
-			Move: otherSnakeMove(sr, snake),
+			Move: otherSnakeMove(mr, snake),
 		})
 	}
 
-	nextBoardState, err := ruleset.CreateNextBoardState(&sr.Board, moves)
+	nextBoardState, err := ruleset.CreateNextBoardState(&mr.Board, moves)
 	if err != nil {
 		fmt.Printf("%v\n", err.Error())
 		panic("failed")
@@ -137,7 +145,7 @@ func getNextMoveRequest(sr models.MoveRequest, direction string) models.MoveRequ
 
 	you := models.Snake{}
 	for _, snake := range nextBoardState.Snakes {
-		if snake.ID == sr.You.ID {
+		if snake.ID == mr.You.ID {
 			you = models.Snake(snake)
 			break
 		}
@@ -145,7 +153,7 @@ func getNextMoveRequest(sr models.MoveRequest, direction string) models.MoveRequ
 
 	return models.MoveRequest{
 		Board:                    *nextBoardState,
-		Turn:                     sr.Turn + 1,
+		Turn:                     mr.Turn + 1,
 		You:                      you,
 		WeightedMaps:             map[string]models.WeightedMap{},
 		WeightedMapsAchievedGoal: map[string]bool{},
@@ -181,14 +189,6 @@ func move(sr models.MoveRequest) rules.SnakeMove {
 	bestWorst := math.Max(worstLeft, math.Max(worstright, math.Max(worstUp, worstDown)))
 	bestBest := math.Max(bestLeft, math.Max(bestRight, math.Max(bestUp, bestDown)))
 
-	//direction := map[float64]string{
-	//	worstUp:    rules.MoveDown,
-	//	worstDown:  rules.MoveUp,
-	//	worstLeft:  rules.MoveLeft,
-	//	worstright: rules.MoveRight,
-	//}[bestWorst]
-	//fmt.Printf("up:%v, down:%v, left:%v, right:%v, bestWorst:%v bestBest:%v, dir:%s\n", worstUp, worstDown, worstLeft, worstright, bestWorst, bestBest, direction)
-
 	direction := map[float64]string{
 		bestUp:    rules.MoveDown,
 		bestDown:  rules.MoveUp,
@@ -196,7 +196,7 @@ func move(sr models.MoveRequest) rules.SnakeMove {
 		bestRight: rules.MoveRight,
 	}[bestBest]
 
-	fmt.Printf("up:%v, down:%v, left:%v, right:%v, bestbest:%v bestBest:%v, dir:%s\n", bestUp, bestDown, bestLeft, bestRight, bestWorst, bestBest, direction)
+	fmt.Printf("up:%v, down:%v, left:%v, right:%v, bestWorst:%v bestBest:%v, dir:%s\n", bestUp, bestDown, bestLeft, bestRight, bestWorst, bestBest, direction)
 
 	return rules.SnakeMove{
 		Move: direction,
@@ -204,10 +204,14 @@ func move(sr models.MoveRequest) rules.SnakeMove {
 	}
 }
 
-func findBestWorstCaseScenarios(dir string, request, previous models.MoveRequest, c chan float64, ctx context.Context) {
+func findBestWorstCaseScenarios(dir string, current, previous models.MoveRequest, c chan float64, ctx context.Context) {
 	i := 0
-	worstRating := rateState(request, previous)
-	bestRating := worstRating
+	rating := rateState(current, previous)
+	worstRating := rating
+	bestRating := rating
+	path := models.Points{
+		previous.You.Head(),
+	}
 	done := false
 	for !done {
 		select {
@@ -215,15 +219,26 @@ func findBestWorstCaseScenarios(dir string, request, previous models.MoveRequest
 			done = true
 			break
 		default:
+			if current.IsDead(current.You.ID) {
+				done = true
+				break
+			}
+
+			head := current.You.Head()
+			if path.Contains(head) {
+				done = true
+				break
+			}
+
 			i += 1
-			leftMoveRequest := getNextMoveRequest(request, rules.MoveLeft)
-			rightMoveRequest := getNextMoveRequest(request, rules.MoveRight)
-			upMoveRequest := getNextMoveRequest(request, rules.MoveUp)
-			downMoveRequest := getNextMoveRequest(request, rules.MoveDown)
-			left := rateState(leftMoveRequest, request)
-			right := rateState(rightMoveRequest, request)
-			up := rateState(upMoveRequest, request)
-			down := rateState(downMoveRequest, request)
+			leftMoveRequest := getNextMoveRequest(current, rules.MoveLeft)
+			rightMoveRequest := getNextMoveRequest(current, rules.MoveRight)
+			upMoveRequest := getNextMoveRequest(current, rules.MoveUp)
+			downMoveRequest := getNextMoveRequest(current, rules.MoveDown)
+			left := rateState(leftMoveRequest, current)
+			right := rateState(rightMoveRequest, current)
+			up := rateState(upMoveRequest, current)
+			down := rateState(downMoveRequest, current)
 			max := math.Max(up, math.Max(down, math.Max(left, right)))
 			worstRating = math.Min(worstRating, max)
 			bestRating = math.Max(bestRating, max)
@@ -235,9 +250,11 @@ func findBestWorstCaseScenarios(dir string, request, previous models.MoveRequest
 				right: rules.MoveRight,
 			}[max]
 
-			previous = request
-			request = getNextMoveRequest(request, direction)
-			if request.IsDead(request.You.ID) {
+			previous = current
+			current = getNextMoveRequest(current, direction)
+
+			path = append(path, head)
+			if len(path) > 50 {
 				done = true
 				break
 			}

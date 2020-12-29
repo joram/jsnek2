@@ -181,3 +181,13 @@ func (mr *MoveRequest) IsDead(id string) bool {
 	}
 	return true
 }
+
+func (mr *MoveRequest) IsEdge(p Point) bool {
+	if p.X == 0 || p.Y == 0 {
+		return true
+	}
+	if p.X == mr.Board.Width-2 || p.Y == mr.Board.Height-2 {
+		return true
+	}
+	return false
+}
